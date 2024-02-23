@@ -34,7 +34,8 @@ themes = {
     'c64': (0, 0, 0.66, 1, 0, 0.53, 1, 1)
 }
 
-theme = themes['c64']
+theme = themes['light']
+
 bg_color = theme[:4]
 text_color = theme[4:]
 
