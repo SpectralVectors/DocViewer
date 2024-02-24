@@ -58,9 +58,6 @@ def get_pil_text_size(text, font_size, font_name):
     size = font.getbbox(text)
     return size
 
-# def index_of_substring(string, sub_string):
-#     word = range(len(string))
-#     return [index for index in word if string.startswith(sub_string, index)]
 
 # Function to set up Background drawing
 def draw_bg():
@@ -101,8 +98,7 @@ def draw_bg():
     batch.draw(bg_shader)
 
 
-#### Pass to draw:
-# text, sub_line, font, text_size, text_color, text_position
+# Format the text before passing it onto the draw function
 def format_text(context, text_lines, fonts):
     draw_lines = {}  # '0': (sub_line, text, font_id, size, color, position)
     sub_lines = {}  # '0': (char, font_id, size, color, position, start, end)
@@ -194,7 +190,6 @@ def format_text(context, text_lines, fonts):
             start = start - 1
             end = link.end()
 
-
         # For sub-line formatting
         # e.g. links, single words in italic or bold
         if sub_line:
@@ -204,7 +199,8 @@ def format_text(context, text_lines, fonts):
                 else:
                     text_color = theme[4:]
                 i = str(i)
-                sub_lines[i] = (char, font_id, text_size, text_color, offset_x, offset_y)
+                fli = f'{l}_{i}'
+                sub_lines[fli] = (char, font_id, text_size, text_color, offset_x, offset_y)
                 offset_x += get_pil_text_size(char, text_size, regular_path)[2]
 
         # For line level formatting
@@ -226,27 +222,28 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
     view = context.region.view2d
     scroll = view.region_to_view(x, y)
     scroll_factor = 5
-    
-    lines = draw_lines  
-    sub = sub_lines 
+
+    lines = draw_lines
+    sub = sub_lines
 
     for l in lines:  # (sub_line, line, font_id, text_size, text_color, offset_x, offset_y)
         if lines[l][0]:  # if sub_line is True
             for i in sub:  # (char, font_id, text_size, text_color, offset_x, offset_y)
-                font_id = sub[i][1]
-                text_size = sub[i][2]
+                char       = sub[i][0]
+                font_id    = sub[i][1]
+                text_size  = sub[i][2]
                 text_color = sub[i][3]
-                offset_x = sub[i][4]
-                offset_y = sub[i][5]
-                char = sub[i][0]
+                offset_x   = sub[i][4]
+                offset_y   = sub[i][5]
+
 
                 if scroll[0] > 0:
                     offset_x -= scroll[0] / scroll_factor
                 if scroll[1] < 0:
                     offset_y += scroll[1] / scroll_factor
 
-#                offset_x += context.scene.offset_x
-#                offset_y += context.scene.offset_y
+    #                offset_x += context.scene.offset_x
+    #                offset_y += context.scene.offset_y
 
                 blf.size(font_id, text_size)
                 blf.position(
@@ -258,12 +255,12 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
                 blf.color(font_id, *text_color)
                 blf.draw(font_id, char)
         else:
-            font_id = lines[l][2]
-            text_size = lines[l][3]
-            offset_x = lines[l][5]
-            offset_y = lines[l][6]
+            line       = lines[l][1]
+            font_id    = lines[l][2]
+            text_size  = lines[l][3]
             text_color = lines[l][4]
-            line = lines[l][1]
+            offset_x   = lines[l][5]
+            offset_y   = lines[l][6]
 
             if scroll[0] > 0:
                 offset_x -= scroll[0] / scroll_factor
