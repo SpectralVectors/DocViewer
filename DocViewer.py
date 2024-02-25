@@ -51,6 +51,8 @@ theme = themes['light']
 bg_color = theme[:4]
 text_color = theme[4:]
 
+base_size = 24
+# (2, 12) (3, 8) (4, 6) 
 
 # Function to calculate screen size of rendered characters
 def get_pil_text_size(text, font_size, font_name):
@@ -107,84 +109,85 @@ def format_text(context, text_lines, fonts):
     italic = fonts[1]
     bold = fonts[2]
 
-    offset_x = 12
-    offset_y = 42
+    offset_x = base_size / 2
+    offset_y = base_size + (base_size / 2) + (base_size / 4)
 
     for l, line in enumerate(text_lines):
         # Format Headers
-        if line.startswith('#'):
+        header = line.startswith('#')
+        if header:
             # Header 1
             if line.startswith('# '):
-                text_size = 52
+                text_size = base_size * 2 + (base_size / 6)
                 font_id = bold
             # Header 2
             elif line.startswith('## '):
-                text_size = 48
+                text_size = base_size * 2
                 font_id = bold
             # Header 3
             elif line.startswith('### '):
-                text_size = 44
+                text_size = base_size + (base_size / 2) + (base_size / 3)
                 font_id = bold
             # Header 4
             elif line.startswith('#### '):
-                text_size = 40
+                text_size = base_size + (base_size / 2) + (base_size / 6)
             # Header 5
             elif line.startswith('##### '):
-                text_size = 36
+                text_size = base_size + (base_size / 3)
             # Header 6
             elif line.startswith('####### '):
-                text_size = 32
+                text_size = base_size + (base_size / 8)
+            line = line.replace('#', '')
             offset_y += text_size
 
         # Format Italic
         elif line.startswith('_'):
-            line = line.replace('_', '')
-            text_size = 24
+            text_size = base_size
             font_id = italic
+            line = line.replace('_', '')
 
         # Format Bullets
         elif line.startswith('-'):
-            line = f'    {line}'
-            text_size = 24
+            b1 = int(base_size / 6)
+            text_size = base_size
             font_id = regular
+            line = f"{' '*b1}{line}"
         elif line.startswith('  -'):
-            text_size = 24
+            b2 = int(base_size / 3)
+            text_size = base_size
             font_id = regular
-            line = f'        {line}'
+            line = f"{' '*b2}{line}"
         elif line.startswith('    -'):
-            text_size = 24
+            b3 = int(base_size / 2)
+            text_size = base_size
             font_id = regular
-            line = f'            {line}'
+            line = f"{' '*b3}{line}"
 
         # Format Regular Text
         else:
-            text_size = 24
+            text_size = base_size
             font_id = regular
 
         # Determine X, Y offsets for drawing lines
-        if text_size == 24:
-            offset_y += 4
-            offset_x = 28
+        if text_size == base_size:
+            offset_y += base_size / 6
+            offset_x = base_size + (base_size / 6)
         else:
-            offset_x = 12
+            offset_x = base_size / 2
 
-        line = line.replace('#', '').replace('-', '•')
+        line = line.replace('-', '•')
 
         # Format Links
         sub_line = False
+        regex = r'\[([^\[]+)]\(\s*(http[s]?:\/\/.+)\s*\)'
+        brackets = ['[', ']', '(', ')']
 
-        link_name = r"[^\[]+"
-        link_url = r"http[s]?://.+"
-        markup_regex = f'\[({link_name})]\(\s*({link_url})\s*\)'
-
-        for name, url in re.findall(markup_regex, line):
+        for name, url in re.findall(regex, line):
             sub_line = True
-            line = re.sub(
-                repl='',
-                pattern=url,
-                string=line
-            ).replace('[', '').replace(']', '')
-            line = line.replace('(', '').replace(')', '')
+            for brace in brackets:
+                line = line.replace(brace, '')
+            line = line.replace(url, '')
+
             link = re.search(name, line)
             start = link.start()
             start = start - 1
@@ -209,41 +212,65 @@ def format_text(context, text_lines, fonts):
         l = str(l)
         draw_lines[l] = (sub_line, line, font_id, text_size, text_color, offset_x, offset_y)
 
-        offset_y += 28
+        offset_y += base_size + (base_size / 6)
 
     return draw_lines, sub_lines, offset_x, offset_y
 
 
 # Function to setup Text drawing
 def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
+    if context.area.ui_type == 'DocumentViewer':
+        x = context.region.x
+        y = context.region.y
+        view = context.region.view2d
+        scroll = view.region_to_view(x, y)
+        scroll_factor = 5
 
-    x = context.region.x
-    y = context.region.y
-    view = context.region.view2d
-    scroll = view.region_to_view(x, y)
-    scroll_factor = 5
+        lines = draw_lines
+        sub = sub_lines
 
-    lines = draw_lines
-    sub = sub_lines
+        for l in lines:  # (sub_line, line, font_id, text_size, text_color, offset_x, offset_y)
+            if lines[l][0]:  # if sub_line is True
+                for i in sub:  # (char, font_id, text_size, text_color, offset_x, offset_y)
+                    char       = sub[i][0]
+                    font_id    = sub[i][1]
+                    text_size  = sub[i][2]
+                    text_color = sub[i][3]
+                    offset_x   = sub[i][4]
+                    offset_y   = sub[i][5]
 
-    for l in lines:  # (sub_line, line, font_id, text_size, text_color, offset_x, offset_y)
-        if lines[l][0]:  # if sub_line is True
-            for i in sub:  # (char, font_id, text_size, text_color, offset_x, offset_y)
-                char       = sub[i][0]
-                font_id    = sub[i][1]
-                text_size  = sub[i][2]
-                text_color = sub[i][3]
-                offset_x   = sub[i][4]
-                offset_y   = sub[i][5]
+                    if scroll[0] > 0:
+                        offset_x -= scroll[0] / scroll_factor
+                    if scroll[1] < 0:
+                        offset_y += scroll[1] / scroll_factor
 
+    #                offset_x += context.scene.offset_x
+    #                offset_y += context.scene.offset_y
+
+                    blf.size(font_id, text_size)
+                    blf.position(
+                        font_id,
+                        offset_x,
+                        context.area.height - offset_y,
+                        0
+                    )
+                    blf.color(font_id, *text_color)
+                    blf.draw(font_id, char)
+            else:
+                line       = lines[l][1]
+                font_id    = lines[l][2]
+                text_size  = lines[l][3]
+                text_color = lines[l][4]
+                offset_x   = lines[l][5]
+                offset_y   = lines[l][6]
 
                 if scroll[0] > 0:
                     offset_x -= scroll[0] / scroll_factor
                 if scroll[1] < 0:
                     offset_y += scroll[1] / scroll_factor
 
-    #                offset_x += context.scene.offset_x
-    #                offset_y += context.scene.offset_y
+    #            offset_x += context.scene.offset_x
+    #            offset_y += context.scene.offset_y
 
                 blf.size(font_id, text_size)
                 blf.position(
@@ -253,33 +280,7 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
                     0
                 )
                 blf.color(font_id, *text_color)
-                blf.draw(font_id, char)
-        else:
-            line       = lines[l][1]
-            font_id    = lines[l][2]
-            text_size  = lines[l][3]
-            text_color = lines[l][4]
-            offset_x   = lines[l][5]
-            offset_y   = lines[l][6]
-
-            if scroll[0] > 0:
-                offset_x -= scroll[0] / scroll_factor
-            if scroll[1] < 0:
-                offset_y += scroll[1] / scroll_factor
-
-#            offset_x += context.scene.offset_x
-#            offset_y += context.scene.offset_y
-
-            blf.size(font_id, text_size)
-            blf.position(
-                font_id,
-                offset_x,
-                context.area.height - offset_y,
-                0
-            )
-            blf.color(font_id, *text_color)
-            blf.draw(font_id, line)
-
+                blf.draw(font_id, line)
 
 
 class DocumentViewer(NodeTree):
@@ -297,12 +298,14 @@ class DrawDocument(bpy.types.Operator):
         if context.space_data is not None:
             if context.area.ui_type == 'DocumentViewer':
                 context.area.tag_redraw()
-#                if event.type == 'MIDDLEMOUSE':
+#                if event.type == 'MOUSEMOVE':
 #                    if event.value == 'PRESS':
 #                        context.scene.offset_y += 10
 #                        print(context.scene.offset_y)
-#                        x = event.mouse_prev_press_x - event.mouse_x
-#                        y = event.mouse_prev_press_y - event.mouse_y
+#                    x = event.mouse_prev_press_x - event.mouse_x
+#                    y = event.mouse_prev_press_y - event.mouse_y
+#                    context.scene.offset_x = x
+#                    context.scene.offset_y = y
 #                        print(x, y)
                 return {'PASS_THROUGH'}  # do not block execution
         else:
@@ -324,9 +327,9 @@ class DrawDocument(bpy.types.Operator):
                 
             fonts = [regular, italic, bold]
 
-            draw_handler_add = context.space_data.draw_handler_add
-            draw_handler_remove = context.space_data.draw_handler_remove
-            modal_handler_add = context.window_manager.modal_handler_add
+            add_draw = context.space_data.draw_handler_add
+            remove_draw = context.space_data.draw_handler_remove
+            add_modal = context.window_manager.modal_handler_add
 
             if not internal:
                 # External File
@@ -334,7 +337,6 @@ class DrawDocument(bpy.types.Operator):
                 full_path = os.path.expanduser(path)
                 with open(full_path) as file:
                     text = file.read()
-
                 # To separate external text files into lines
                 text_lines = text.split("\n")
 
@@ -353,26 +355,26 @@ class DrawDocument(bpy.types.Operator):
             offset_y = format_text(context, text_lines, fonts)[3]
 
             # Now we add the draw handler to the window
-            self.bg_handle = draw_handler_add(
+            self.bg_handle = add_draw(
                 draw_bg,
                 (),
                 'WINDOW',
                 'BACKDROP'
             )
 
-            self.text_handle = draw_handler_add(
+            self.text_handle = add_draw(
                 draw_text,
                 (self, context, draw_lines, sub_lines, offset_x, offset_y),
                 'WINDOW',
                 'POST_PIXEL'  # BACKDROP or POST_PIXEL
             )
 
-            modal_handler_add(self)
+            add_modal(self)
             return {'RUNNING_MODAL'}
 
         if event.type == 'ESC':
-            draw_handler_remove(self.bg_handle, 'WINDOW')
-            draw_handler_remove(self.text_handle, 'WINDOW')
+            remove_draw(self.bg_handle, 'WINDOW')
+            remove_draw(self.text_handle, 'WINDOW')
             return {'FINISHED'}
         else:
             return {'CANCELLED'}
