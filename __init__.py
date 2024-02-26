@@ -17,7 +17,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 0, 2),
+    "version": (0, 0, 5),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -107,8 +107,16 @@ def draw_bg():
 # Format the text before passing it onto the draw function
 def format_text(context, text_lines, fonts):
     props = context.scene.docview_props
-    base_size = props.base_size
     regular_path = props.regular_path
+    base_size = props.base_size
+
+    # Derive all scale elements from the base font size
+    double = base_size * 2
+    half = base_size / 2
+    third = base_size / 3
+    quarter = base_size / 4
+    sixth = base_size / 6
+    eigth = base_size / 8
 
     draw_lines = {}  # '0': (sub_line, text, font_id, size, color, position)
     sub_lines = {}  # '0_0': (char, font_id, size, color, position, start, end)
@@ -117,15 +125,15 @@ def format_text(context, text_lines, fonts):
     italic = fonts[1]
     bold = fonts[2]
 
-    offset_x = base_size / 2
-    offset_y = base_size + (base_size / 2) + (base_size / 4)
+    offset_x = half
+    offset_y = base_size + half + quarter
 
     for line_index, line in enumerate(text_lines):
 
         # Shorten line.startswith to first: 1st character in line
         first = line.startswith
 
-        # Define lines types
+        # Define line types
         header = first('#')
         bullet = line.lstrip().startswith('-')
         italicized = first('_') or first('*')
@@ -136,25 +144,25 @@ def format_text(context, text_lines, fonts):
         if header:
             # Header 1
             if first('# '):
-                text_size = base_size * 2 + (base_size / 6)
+                text_size = double + sixth
                 font_id = bold
             # Header 2
             elif first('## '):
-                text_size = base_size * 2
+                text_size = double
                 font_id = bold
             # Header 3
             elif first('### '):
-                text_size = base_size + (base_size / 2) + (base_size / 3)
+                text_size = base_size + half + third
                 font_id = bold
             # Header 4
             elif first('#### '):
-                text_size = base_size + (base_size / 2) + (base_size / 6)
+                text_size = base_size + half + sixth
             # Header 5
             elif first('##### '):
-                text_size = base_size + (base_size / 3)
+                text_size = base_size + third
             # Header 6
             elif first('####### '):
-                text_size = base_size + (base_size / 8)
+                text_size = base_size + eigth
             line = line.replace('#', '')
             offset_y += text_size
 
@@ -173,19 +181,19 @@ def format_text(context, text_lines, fonts):
         # Format Bullets
         elif bullet:
             if first('-'):
-                b1 = int(base_size / 6)
+                b1 = int(sixth)
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '◦')
                 line = f"{' '*b1}{line}"
             elif first('  -'):
-                b2 = int(base_size / 3)
+                b2 = int(third)
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '•')
                 line = f"{' '*b2}{line}"
             elif first('    -'):
-                b3 = int(base_size / 2)
+                b3 = int(half)
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '∙')
@@ -198,10 +206,10 @@ def format_text(context, text_lines, fonts):
 
         # Determine X, Y offsets for drawing lines
         if text_size == base_size:
-            offset_y += base_size / 6
-            offset_x = base_size + (base_size / 6)
+            offset_y += sixth
+            offset_x = base_size + sixth
         else:
-            offset_x = base_size / 2
+            offset_x = half
 
         # Format Links
         sub_line = False
@@ -230,12 +238,12 @@ def format_text(context, text_lines, fonts):
                 i = str(i)
                 fli = f'{line_index}_{i}'
                 sub_lines[fli] = (
-                    char,
-                    font_id,
-                    text_size,
-                    text_color,
-                    offset_x,
-                    offset_y
+                    char,        # 0 : single character from line
+                    font_id,     # 1 : blf loaded font file
+                    text_size,   # 2 : font size of the text
+                    text_color,  # 3 : color of the text
+                    offset_x,    # 4 : horizontal offset of each character
+                    offset_y     # 5 : vertical offset of the line
                 )
                 offset_x += get_pil_text_size(char, text_size, regular_path)[2]
 
@@ -244,16 +252,15 @@ def format_text(context, text_lines, fonts):
         text_color = theme[4:]
         line_index = str(line_index)
         draw_lines[line_index] = (
-            sub_line,
-            line,
-            font_id,
-            text_size,
-            text_color,
-            offset_x,
-            offset_y
+            line,        # 0 : the text of the line
+            font_id,     # 1 : blf loaded font file
+            text_size,   # 2 : font size of the text
+            text_color,  # 3 : color of the text
+            offset_x,    # 4 : horizontal offset of the line
+            offset_y,    # 5 : vertical offset of the line
+            sub_line     # 6 : boolean, true if a link is found
         )
-
-        offset_y += base_size + (base_size / 6)
+        offset_y += base_size + sixth
 
     return draw_lines, sub_lines, offset_x, offset_y
 
@@ -271,7 +278,7 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
         sub = sub_lines
 
         for line_text in lines:
-            if lines[line_text][0]:  # if sub_line is True
+            if lines[line_text][6]:  # if sub_line is True
                 for i in sub:
                     char = sub[i][0]
                     font_id = sub[i][1]
@@ -298,12 +305,12 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
                     blf.color(font_id, *text_color)
                     blf.draw(font_id, char)
             else:
-                line = lines[line_text][1]
-                font_id = lines[line_text][2]
-                text_size = lines[line_text][3]
-                text_color = lines[line_text][4]
-                offset_x = lines[line_text][5]
-                offset_y = lines[line_text][6]
+                line = lines[line_text][0]
+                font_id = lines[line_text][1]
+                text_size = lines[line_text][2]
+                text_color = lines[line_text][3]
+                offset_x = lines[line_text][4]
+                offset_y = lines[line_text][5]
 
                 if scroll[0] > 0:
                     offset_x -= scroll[0] / scroll_factor
@@ -394,11 +401,12 @@ class DrawDocument(Operator):
 
             if internal:
                 # Internal File
-                for area in context.screen.areas:
-                    if area.type == 'TEXT_EDITOR':
-                        text_name = area.spaces[0].text.name
-                        text = bpy.data.texts[text_name]
-                        text_lines = [line.body for line in text.lines]
+                try:
+                    text = bpy.data.texts['Text']
+                except KeyError:
+                    bpy.ops.text.new()
+                    text = bpy.data.texts['Text']
+                text_lines = [line.body for line in text.lines]
 
             draw_lines, sub_lines, offset_x, offset_y = format_text(context, text_lines, fonts)
 
@@ -444,12 +452,22 @@ classes = [
 ]
 
 
+def menu_func(self, context):
+    if context.area.ui_type == 'DocumentViewer':
+        layout = self.layout
+        props = context.scene.docview_props
+        layout.operator('docview.draw_document', icon='FILE_TICK')
+        layout.prop(props, 'base_size', text='Size')
+        layout.prop(props, 'internal', text='Use Blender Text Data')
+
+
 def register():
     from bpy.utils import register_class
     for cls in classes:
         register_class(cls)
 
     bpy.types.Scene.docview_props = PointerProperty(type=DocViewProps)
+    bpy.types.NODE_MT_editor_menus.append(menu_func)
 
 
 def unregister():
@@ -458,6 +476,7 @@ def unregister():
         unregister_class(cls)
 
     del bpy.types.Scene.docview_props
+    bpy.types.NODE_MT_editor_menus.remove(menu_func)
 
 
 if __name__ == "__main__":

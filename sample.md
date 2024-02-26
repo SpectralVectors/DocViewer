@@ -5,7 +5,8 @@
 ### Tertiary title
 
 #### Click the button below to directly download MCprep
-_By downloading and installing, you agree to the following [Privacy Policy](https://theduckcow.com/privacy-policy) including anonymous data tracking clause. Do not download the zip file from the readme page, you must click the button above_
+_By downloading and installing, you agree to the following [Privacy Policy](https://theduckcow.com/privacy-policy) including anonymous data tracking clause._
+__Do not download the zip file from the readme page, you must click the button above__
 
 ### New in this (3.0.2) release:
 - Added brand new feature: Meshswap block spawning!
