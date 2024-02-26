@@ -17,7 +17,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 0, 5),
+    "version": (0, 1, 0),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -37,17 +37,11 @@ text = blender_theme.text_editor.space.text
 themes = {
     # Format is Background Color, then Text Color, both in RGBA
     # (bg-r, bg-g, bg-b, bg-a, text-r, text-g, text-b, text-a)
-    #
-    # Light: White BG, Black Text
-    # Dark: Dark Grey BG, Light Grey Text
-    # Blender: Dark Grey BG, Off White Text
-    # Paperback: Yellowed BG, Dark Grey Text
-    # C64: Dark Blue BG, Light Blue Text
-    'light': (0.8, 0.8, 0.8, 1, 0, 0, 0, 1),
-    'dark': (0.1, 0.1, 0.1, 1, 0.6, 0.6, 0.6, 1),
-    'blender': (*back, 1, *text, 1),
-    'paperback': (0.7, 0.7, 0.6, 1, 0.25, 0.25, 0.25, 1),
-    'c64': (0, 0, 0.66, 1, 0, 0.53, 1, 1)
+    'light': (0.8, 0.8, 0.8, 1, 0, 0, 0, 1),  # BG White, Text Black
+    'dark': (0.1, 0.1, 0.1, 1, 0.6, 0.6, 0.6, 1),  # BG Grey, Text Grey
+    'blender': (*back, 1, *text, 1),  # BG Grey, Text Off White
+    'paperback': (0.7, 0.7, 0.6, 1, 0.25, 0.25, 0.25, 1),  # BG Tan, Text Grey
+    'c64': (0, 0, 0.66, 1, 0, 0.53, 1, 1)  # Dark Blue BG, Light Blue Text
 }
 
 # Set the current theme
@@ -102,6 +96,53 @@ def draw_bg():
         bg_color
     )
     batch.draw(bg_shader)
+
+
+def draw_image(context, offset_x, offset_y, url):
+    props = context.scene.docview_props
+    folder = props.folder
+    if context.area.ui_type == 'DocumentViewer':
+        filepath = os.path.join(folder, url)
+        bpy.ops.image.open(filepath=filepath)
+        bpy.ops.image.pack()
+
+        image_name = bpy.path.basename(filepath)
+        image = bpy.data.images[image_name]
+        texture = gpu.texture.from_image(image)
+
+        width = image.size[0]
+        height = image.size[1]
+        x = offset_x
+        y = offset_y
+
+        try:
+            shader = gpu.shader.from_builtin('IMAGE')
+        except NameError:
+            shader = gpu.shader.from_builtin('2D_IMAGE')
+
+        batch = batch_for_shader(
+            shader, 'TRI_FAN',
+            {
+                "pos": (
+                    (x, y),
+                    (x + width, y),
+                    (x + width, y + height),
+                    (x, y + height)
+                ),
+                "texCoord": (
+                    (0, 0),
+                    (1, 0),
+                    (1, 1),
+                    (0, 1)
+                ),
+            },
+        )
+        shader.bind()
+        shader.uniform_sampler("image", texture)
+        batch.draw(shader)
+
+        offset_y += height
+        return offset_y
 
 
 # Format the text before passing it onto the draw function
@@ -215,9 +256,17 @@ def format_text(context, text_lines, fonts):
         sub_line = False
         regex = r'\[([^\[]+)]\(\s*(http[s]?:\/\/.+)\s*\)'
         brackets = ['[', ']', '(', ')']
+        extensions = ['.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif']
 
         for name, url in re.findall(regex, line):
             sub_line = True
+            # Detect Images
+            for ext in extensions:
+                if url.lower().endswith(ext):
+                    url = f'images\\{url}'
+                    line.replace(name, '')
+                    offset_y += draw_image(context, offset_x, offset_y, url)
+            # Common formatting for links and images
             for brace in brackets:
                 line = line.replace(brace, '')
             line = line.replace(url, '')
@@ -228,16 +277,16 @@ def format_text(context, text_lines, fonts):
             end = link.end()
 
         # For sub-line formatting
-        # e.g. links, single words in italic or bold
+        # e.g. links, images
         if sub_line:
-            for i, char in enumerate(line):
-                if i in range(start, end):
+            for sub_index, char in enumerate(line):
+                if sub_index in range(start, end):
                     text_color = (0, 0, 1, 1)
                 else:
                     text_color = theme[4:]
-                i = str(i)
-                fli = f'{line_index}_{i}'
-                sub_lines[fli] = (
+                sub_index = str(sub_index)
+                sub_index = f'{line_index}_{sub_index}'
+                sub_lines[sub_index] = (
                     char,        # 0 : single character from line
                     font_id,     # 1 : blf loaded font file
                     text_size,   # 2 : font size of the text
@@ -279,13 +328,13 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
 
         for line_text in lines:
             if lines[line_text][6]:  # if sub_line is True
-                for i in sub:
-                    char = sub[i][0]
-                    font_id = sub[i][1]
-                    text_size = sub[i][2]
-                    text_color = sub[i][3]
-                    offset_x = sub[i][4]
-                    offset_y = sub[i][5]
+                for sub_index in sub:
+                    char = sub[sub_index][0]
+                    font_id = sub[sub_index][1]
+                    text_size = sub[sub_index][2]
+                    text_color = sub[sub_index][3]
+                    offset_x = sub[sub_index][4]
+                    offset_y = sub[sub_index][5]
 
                     if scroll[0] > 0:
                         offset_x -= scroll[0] / scroll_factor
@@ -331,6 +380,10 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
                 blf.draw(font_id, line)
 
 
+def update_func(self, context):
+    bpy.ops.docview.draw_document('INVOKE_DEFAULT')
+
+
 class DocumentViewer(NodeTree):
     '''A Document Viewer'''
     bl_idname = 'DocumentViewer'
@@ -342,16 +395,29 @@ class DrawDocument(Operator):
     bl_idname = "docview.draw_document"
     bl_label = "Draw Document"
 
+    def remove_handle(self):
+        try:
+            try:
+                bg_handle = bpy.app.driver_namespace['bg_handle']
+                text_handle = bpy.app.driver_namespace['text_handle']
+                space = bpy.types.SpaceNodeEditor
+                space.draw_handler_remove(bg_handle, 'WINDOW')
+                space.draw_handler_remove(text_handle, 'WINDOW')
+                return {'FINISHED'}
+            except AttributeError:
+                print('No draw handlers found!')
+        except ValueError:
+            print('Null pointer!')
+
     def modal(self, context, event):
-        remove_draw = context.space_data.draw_handler_remove
+        # draw_handlers = bpy.app.driver_namespace
+        # remove_draw = context.space_data.draw_handler_remove
         if context.space_data is not None:
             if context.area.ui_type == 'DocumentViewer':
                 context.area.tag_redraw()
 
                 if event.type == 'ESC':
-                    remove_draw(self.bg_handle, 'WINDOW')
-                    remove_draw(self.text_handle, 'WINDOW')
-                    return {'CANCELLED'}
+                    self.remove_handle()
 #                if event.type == 'LEFTMOUSE':
 #                    if event.value == 'PRESS':
 #                        context.scene.base_size += 10
@@ -383,12 +449,12 @@ class DrawDocument(Operator):
             if regular is not None:
                 font_id = regular
             else:
-                font_id = regular = italic = bold = 0
+                font_id = regular = italic = bold = 0 # noqa F841
 
             fonts = [regular, italic, bold]
 
-            add_draw = context.space_data.draw_handler_add
-            # remove_draw = context.space_data.draw_handler_remove
+            add_draw = bpy.types.SpaceNodeEditor.draw_handler_add
+            # remove_draw = bpy.types.SpaceNodeEditor.draw_handler_remove
             add_modal = context.window_manager.modal_handler_add
 
             if not internal:
@@ -402,23 +468,34 @@ class DrawDocument(Operator):
             if internal:
                 # Internal File
                 try:
-                    text = bpy.data.texts['Text']
-                except KeyError:
+                    text = bpy.data.texts[0]
+                except IndexError:
                     bpy.ops.text.new()
                     text = bpy.data.texts['Text']
+                    text.lines[0].body = '# Check out Markdown in Blender!'
                 text_lines = [line.body for line in text.lines]
 
-            draw_lines, sub_lines, offset_x, offset_y = format_text(context, text_lines, fonts)
+            draw_lines, sub_lines, offset_x, offset_y = format_text(context, text_lines, fonts)  # noqa F458
+
+            if 'bg_handle' in bpy.app.driver_namespace:
+                self.remove_handle()
 
             # Now we add the draw handler to the window
-            self.bg_handle = add_draw(
+            bpy.app.driver_namespace['bg_handle'] = add_draw(
                 draw_bg,
                 (),
                 'WINDOW',
                 'BACKDROP'
             )
 
-            self.text_handle = add_draw(
+            # self.image_handle = add_draw(
+            #     draw_image,
+            #     (),
+            #     'WINDOW',
+            #     'BACKDROP'
+            # )
+
+            bpy.app.driver_namespace['text_handle'] = add_draw(
                 draw_text,
                 (self, context, draw_lines, sub_lines, offset_x, offset_y),
                 'WINDOW',
@@ -432,10 +509,16 @@ class DrawDocument(Operator):
 
 
 class DocViewProps(PropertyGroup):
-    base_size: IntProperty(default=24)
+    base_size: IntProperty(
+        default=24,
+        update=update_func
+    )
     offset_x: FloatProperty(default=0.0)
     offset_y: FloatProperty(default=0.0)
-    internal: BoolProperty(default=False)
+    internal: BoolProperty(
+        default=False,
+        update=update_func
+    )
 
     folder = os.path.dirname(os.path.abspath(__file__))
     regular_path = os.path.join(folder, 'fonts/OpenSans-Regular.ttf')
