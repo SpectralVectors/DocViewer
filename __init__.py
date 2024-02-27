@@ -17,7 +17,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 1, 0),
+    "version": (0, 1, 1),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -98,22 +98,26 @@ def draw_bg():
     batch.draw(bg_shader)
 
 
-def draw_image(context, offset_x, offset_y, url):
-    props = context.scene.docview_props
-    folder = props.folder
+def draw_image(self, context, images):
     if context.area.ui_type == 'DocumentViewer':
-        filepath = os.path.join(folder, url)
-        bpy.ops.image.open(filepath=filepath)
-        bpy.ops.image.pack()
+        x = context.region.x
+        y = context.region.y
+        view = context.region.view2d
+        scroll = view.region_to_view(x, y)
+        scroll_factor = 5
 
-        image_name = bpy.path.basename(filepath)
-        image = bpy.data.images[image_name]
-        texture = gpu.texture.from_image(image)
+    for image in images:
+        image = images[image][0]
+        texture = images[image][1]
+        width = images[image][2]
+        height = images[image][3]
+        offset_x = images[image][4]
+        offset_y = images[image][5]
 
-        width = image.size[0]
-        height = image.size[1]
-        x = offset_x
-        y = offset_y
+        if scroll[0] > 0:
+            offset_x -= scroll[0] / scroll_factor
+        if scroll[1] < 0:
+            offset_y -= scroll[1] / scroll_factor
 
         try:
             shader = gpu.shader.from_builtin('IMAGE')
@@ -124,10 +128,10 @@ def draw_image(context, offset_x, offset_y, url):
             shader, 'TRI_FAN',
             {
                 "pos": (
-                    (x, y),
-                    (x + width, y),
-                    (x + width, y + height),
-                    (x, y + height)
+                    (offset_x, offset_y),
+                    (offset_x + width, offset_y),
+                    (offset_x + width, offset_y + height),
+                    (offset_x, offset_y + height)
                 ),
                 "texCoord": (
                     (0, 0),
@@ -140,9 +144,6 @@ def draw_image(context, offset_x, offset_y, url):
         shader.bind()
         shader.uniform_sampler("image", texture)
         batch.draw(shader)
-
-        offset_y += height
-        return offset_y
 
 
 # Format the text before passing it onto the draw function
@@ -161,6 +162,7 @@ def format_text(context, text_lines, fonts):
 
     draw_lines = {}  # '0': (sub_line, text, font_id, size, color, position)
     sub_lines = {}  # '0_0': (char, font_id, size, color, position, start, end)
+    images = {}
 
     regular = fonts[0]
     italic = fonts[1]
@@ -252,9 +254,10 @@ def format_text(context, text_lines, fonts):
         else:
             offset_x = half
 
-        # Format Links
+        # Format Links and Images
         sub_line = False
-        regex = r'\[([^\[]+)]\(\s*(http[s]?:\/\/.+)\s*\)'
+        image_line = False
+        regex = r'(?:\[(?P<name>.*?)\])\((?P<url>.*?)\)'  # r'\[([^\[]+)]\(\s*(http[s]?:\/\/.+)\s*\)' # noqa E501
         brackets = ['[', ']', '(', ')']
         extensions = ['.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif']
 
@@ -263,9 +266,34 @@ def format_text(context, text_lines, fonts):
             # Detect Images
             for ext in extensions:
                 if url.lower().endswith(ext):
-                    url = f'images\\{url}'
-                    line.replace(name, '')
-                    offset_y += draw_image(context, offset_x, offset_y, url)
+                    url = url.replace('/', '\\')
+                    # line.replace(name, '')
+                    folder = props.folder
+                    filepath = f'{folder}{url}'
+                    bpy.ops.image.open(filepath=filepath)
+                    bpy.ops.image.pack()
+
+                    image_name = bpy.path.basename(filepath)
+                    image = bpy.data.images[image_name]
+                    texture = gpu.texture.from_image(image)
+
+                    width = image.size[0] * (base_size / 24)
+                    height = image.size[1] * (base_size / 24)
+                    offset_x = offset_x * (base_size / 24)
+                    offset_y = offset_y * (base_size / 24)
+                    offset_y += height * 7
+                    images[image] = (
+                        image,     # 0 : blender image data block
+                        texture,   # 1 : gpu texture from image
+                        width,     # 2 : image width
+                        height,    # 3 : image height
+                        offset_x,  # 4 : image x start position
+                        offset_y,  # 5 : image y start position
+                    )
+                    image_line = True
+                    line = ''
+                    offset_y -= (height * 6) + base_size
+
             # Common formatting for links and images
             for brace in brackets:
                 line = line.replace(brace, '')
@@ -292,7 +320,7 @@ def format_text(context, text_lines, fonts):
                     text_size,   # 2 : font size of the text
                     text_color,  # 3 : color of the text
                     offset_x,    # 4 : horizontal offset of each character
-                    offset_y     # 5 : vertical offset of the line
+                    offset_y,    # 5 : vertical offset of the line
                 )
                 offset_x += get_pil_text_size(char, text_size, regular_path)[2]
 
@@ -307,15 +335,22 @@ def format_text(context, text_lines, fonts):
             text_color,  # 3 : color of the text
             offset_x,    # 4 : horizontal offset of the line
             offset_y,    # 5 : vertical offset of the line
-            sub_line     # 6 : boolean, true if a link is found
+            sub_line,    # 6 : boolean, true if a link is found
+            image_line   # 7 : boolean, true if an image is found
         )
         offset_y += base_size + sixth
 
-    return draw_lines, sub_lines, offset_x, offset_y
+    return draw_lines, sub_lines, offset_x, offset_y, images
 
 
 # Function to setup Text drawing
-def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
+def draw_text(
+        self,
+        context,
+        draw_lines,
+        sub_lines,
+        offset_x,
+        offset_y):
     if context.area.ui_type == 'DocumentViewer':
         x = context.region.x
         y = context.region.y
@@ -327,7 +362,7 @@ def draw_text(self, context, draw_lines, sub_lines, offset_x, offset_y):
         sub = sub_lines
 
         for line_text in lines:
-            if lines[line_text][6]:  # if sub_line is True
+            if lines[line_text][6] and not lines[line_text][7]:  # if sub_line
                 for sub_index in sub:
                     char = sub[sub_index][0]
                     font_id = sub[sub_index][1]
@@ -400,9 +435,12 @@ class DrawDocument(Operator):
             try:
                 bg_handle = bpy.app.driver_namespace['bg_handle']
                 text_handle = bpy.app.driver_namespace['text_handle']
+                image_handle = bpy.app.driver_namespace['image_handle']
+
                 space = bpy.types.SpaceNodeEditor
                 space.draw_handler_remove(bg_handle, 'WINDOW')
                 space.draw_handler_remove(text_handle, 'WINDOW')
+                space.draw_handler_remove(image_handle, 'WINDOW')
                 return {'FINISHED'}
             except AttributeError:
                 print('No draw handlers found!')
@@ -475,7 +513,7 @@ class DrawDocument(Operator):
                     text.lines[0].body = '# Check out Markdown in Blender!'
                 text_lines = [line.body for line in text.lines]
 
-            draw_lines, sub_lines, offset_x, offset_y = format_text(context, text_lines, fonts)  # noqa F458
+            draw_lines, sub_lines, offset_x, offset_y, images = format_text(context, text_lines, fonts)  # noqa F458
 
             if 'bg_handle' in bpy.app.driver_namespace:
                 self.remove_handle()
@@ -488,12 +526,12 @@ class DrawDocument(Operator):
                 'BACKDROP'
             )
 
-            # self.image_handle = add_draw(
-            #     draw_image,
-            #     (),
-            #     'WINDOW',
-            #     'BACKDROP'
-            # )
+            bpy.app.driver_namespace['image_handle'] = add_draw(
+                draw_image,
+                (self, context, images),
+                'WINDOW',
+                'POST_PIXEL'
+            )
 
             bpy.app.driver_namespace['text_handle'] = add_draw(
                 draw_text,
