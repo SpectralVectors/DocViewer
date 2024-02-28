@@ -17,7 +17,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 1, 1),
+    "version": (0, 1, 2),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -111,13 +111,13 @@ def draw_image(self, context, images):
         texture = images[image][1]
         width = images[image][2]
         height = images[image][3]
-        offset_x = images[image][4]
-        offset_y = images[image][5]
+        image_x = images[image][4]
+        image_y = images[image][5]
 
         if scroll[0] > 0:
-            offset_x -= scroll[0] / scroll_factor
+            image_x -= scroll[0] / scroll_factor
         if scroll[1] < 0:
-            offset_y -= scroll[1] / scroll_factor
+            image_y -= scroll[1] / scroll_factor
 
         try:
             shader = gpu.shader.from_builtin('IMAGE')
@@ -128,10 +128,10 @@ def draw_image(self, context, images):
             shader, 'TRI_FAN',
             {
                 "pos": (
-                    (offset_x, offset_y),
-                    (offset_x + width, offset_y),
-                    (offset_x + width, offset_y + height),
-                    (offset_x, offset_y + height)
+                    (image_x, image_y),
+                    (image_x + width, image_y),
+                    (image_x + width, image_y + height),
+                    (image_x, image_y + height)
                 ),
                 "texCoord": (
                     (0, 0),
@@ -160,9 +160,20 @@ def format_text(context, text_lines, fonts):
     sixth = base_size / 6
     eigth = base_size / 8
 
-    draw_lines = {}  # '0': (sub_line, text, font_id, size, color, position)
-    sub_lines = {}  # '0_0': (char, font_id, size, color, position, start, end)
+    # Create dictionaries to hold all the line, link and image data
+    # These are returned and passed to the draw function
+    draw_lines = {}
+    # key : value
+    # line_index : line data
+    # '0' : (sub_line, text, font_id, size, color, position)
+    sub_lines = {}
+    # key : value
+    # line_index _ sub_index : sub_line data
+    # '0_0' : (char, font_id, size, color, position, start, end)
     images = {}
+    # key : value
+    # bpy.data.images[image] : image data
+    # 'image' : (image, texture, width, height, offset_x, offset_y)
 
     regular = fonts[0]
     italic = fonts[1]
@@ -257,7 +268,7 @@ def format_text(context, text_lines, fonts):
         # Format Links and Images
         sub_line = False
         image_line = False
-        regex = r'(?:\[(?P<name>.*?)\])\((?P<url>.*?)\)'  # r'\[([^\[]+)]\(\s*(http[s]?:\/\/.+)\s*\)' # noqa E501
+        regex = r'(?:\[(?P<name>.*?)\])\((?P<url>.*?)\)'
         brackets = ['[', ']', '(', ')']
         extensions = ['.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif']
 
@@ -267,7 +278,6 @@ def format_text(context, text_lines, fonts):
             for ext in extensions:
                 if url.lower().endswith(ext):
                     url = url.replace('/', '\\')
-                    # line.replace(name, '')
                     folder = props.folder
                     filepath = f'{folder}{url}'
                     bpy.ops.image.open(filepath=filepath)
@@ -279,20 +289,21 @@ def format_text(context, text_lines, fonts):
 
                     width = image.size[0] * (base_size / 24)
                     height = image.size[1] * (base_size / 24)
-                    offset_x = offset_x * (base_size / 24)
-                    offset_y = offset_y * (base_size / 24)
-                    offset_y += height * 7
+                    area_height = context.area.height
+                    image_x = offset_x
+                    image_y = area_height - height - offset_y
+
                     images[image] = (
                         image,     # 0 : blender image data block
                         texture,   # 1 : gpu texture from image
                         width,     # 2 : image width
                         height,    # 3 : image height
-                        offset_x,  # 4 : image x start position
-                        offset_y,  # 5 : image y start position
+                        image_x,  # 4 : image x start position
+                        image_y,  # 5 : image y start position
                     )
                     image_line = True
                     line = ''
-                    offset_y -= (height * 6) + base_size
+                    offset_y += height
 
             # Common formatting for links and images
             for brace in brackets:
@@ -448,8 +459,6 @@ class DrawDocument(Operator):
             print('Null pointer!')
 
     def modal(self, context, event):
-        # draw_handlers = bpy.app.driver_namespace
-        # remove_draw = context.space_data.draw_handler_remove
         if context.space_data is not None:
             if context.area.ui_type == 'DocumentViewer':
                 context.area.tag_redraw()
@@ -492,7 +501,6 @@ class DrawDocument(Operator):
             fonts = [regular, italic, bold]
 
             add_draw = bpy.types.SpaceNodeEditor.draw_handler_add
-            # remove_draw = bpy.types.SpaceNodeEditor.draw_handler_remove
             add_modal = context.window_manager.modal_handler_add
 
             if not internal:
@@ -518,7 +526,7 @@ class DrawDocument(Operator):
             if 'bg_handle' in bpy.app.driver_namespace:
                 self.remove_handle()
 
-            # Now we add the draw handler to the window
+            # Now we add the draw handlers to the window
             bpy.app.driver_namespace['bg_handle'] = add_draw(
                 draw_bg,
                 (),
