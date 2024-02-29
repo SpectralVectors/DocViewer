@@ -6,6 +6,7 @@ from bpy.props import PointerProperty
 from bpy.props import FloatProperty
 from bpy.props import IntProperty
 from bpy.props import BoolProperty
+from bpy.props import EnumProperty
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -17,7 +18,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 1, 2),
+    "version": (0, 1, 4),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -25,31 +26,6 @@ bl_info = {
     "doc_url": "https://github.com/SpectralVectors/DocViewer",
     "category": "Interface",
 }
-
-# Grabbing Blender's Text Editor background and text colors
-# To create the Blender theme
-blender_theme = bpy.context.preferences.themes['Default']
-back = blender_theme.text_editor.space.back
-text = blender_theme.text_editor.space.text
-
-# Dict of available themes, Key is theme name
-# Value is an 8d FloatVector, composed of 2 4d FloatVectors
-themes = {
-    # Format is Background Color, then Text Color, both in RGBA
-    # (bg-r, bg-g, bg-b, bg-a, text-r, text-g, text-b, text-a)
-    'light': (0.8, 0.8, 0.8, 1, 0, 0, 0, 1),  # BG White, Text Black
-    'dark': (0.1, 0.1, 0.1, 1, 0.6, 0.6, 0.6, 1),  # BG Grey, Text Grey
-    'blender': (*back, 1, *text, 1),  # BG Grey, Text Off White
-    'paperback': (0.7, 0.7, 0.6, 1, 0.25, 0.25, 0.25, 1),  # BG Tan, Text Grey
-    'c64': (0, 0, 0.66, 1, 0, 0.53, 1, 1)  # Dark Blue BG, Light Blue Text
-}
-
-# Set the current theme
-theme = themes['light']
-
-# Separate the theme into 2 RGBA colors
-bg_color = theme[:4]
-text_color = theme[4:]
 
 
 # Function to calculate screen size of rendered characters
@@ -60,12 +36,18 @@ def get_pil_text_size(text, font_size, font_name):
 
 
 # Function to set up Background drawing
-def draw_bg():
-    window = bpy.context.window
-    for area in window.screen.areas:
-        if area.ui_type == 'DocumentViewer':
-            width = area.width
-            height = area.height
+def draw_bg(self, context):
+    props = context.scene.docview_props
+    current_theme = props.current_theme
+    themes = props.themes
+    theme = themes[current_theme]
+    bg_color = theme[:4]
+
+    # window = bpy.context.window
+    # for area in window.screen.areas:
+    #     if area.ui_type == 'DocumentViewer':
+    width = context.area.width
+    height = context.area.height
 
 # Here we define the positions of the vertices of the background
     bg_vertices = (
@@ -120,7 +102,7 @@ def draw_image(self, context, images):
             image_y -= scroll[1] / scroll_factor
 
         try:
-            shader = gpu.shader.from_builtin('IMAGE')
+            shader = gpu.shader.from_builtin('IMAGE_COLOR')
         except NameError:
             shader = gpu.shader.from_builtin('2D_IMAGE')
 
@@ -141,6 +123,7 @@ def draw_image(self, context, images):
                 ),
             },
         )
+        gpu.state.blend_set("ALPHA")
         shader.bind()
         shader.uniform_sampler("image", texture)
         batch.draw(shader)
@@ -149,6 +132,13 @@ def draw_image(self, context, images):
 # Format the text before passing it onto the draw function
 def format_text(context, text_lines, fonts):
     props = context.scene.docview_props
+    current_theme = props.current_theme
+    # Set the current theme
+    themes = props.themes
+    theme = themes[current_theme]
+    # Slice the theme into 4 RGBA colors
+    text_color = theme[8:12]
+    link_color = theme[12:]
     regular_path = props.regular_path
     base_size = props.base_size
 
@@ -166,10 +156,12 @@ def format_text(context, text_lines, fonts):
     # key : value
     # line_index : line data
     # '0' : (sub_line, text, font_id, size, color, position)
+
     sub_lines = {}
     # key : value
     # line_index _ sub_index : sub_line data
     # '0_0' : (char, font_id, size, color, position, start, end)
+
     images = {}
     # key : value
     # bpy.data.images[image] : image data
@@ -320,16 +312,16 @@ def format_text(context, text_lines, fonts):
         if sub_line:
             for sub_index, char in enumerate(line):
                 if sub_index in range(start, end):
-                    text_color = (0, 0, 1, 1)
+                    char_color = link_color
                 else:
-                    text_color = theme[4:]
+                    char_color = text_color
                 sub_index = str(sub_index)
                 sub_index = f'{line_index}_{sub_index}'
                 sub_lines[sub_index] = (
                     char,        # 0 : single character from line
                     font_id,     # 1 : blf loaded font file
                     text_size,   # 2 : font size of the text
-                    text_color,  # 3 : color of the text
+                    char_color,  # 3 : color of the text
                     offset_x,    # 4 : horizontal offset of each character
                     offset_y,    # 5 : vertical offset of the line
                 )
@@ -337,13 +329,13 @@ def format_text(context, text_lines, fonts):
 
         # For line level formatting
         # e.g. headers, regular text, full lines in italic or bold
-        text_color = theme[4:]
+        line_color = text_color
         line_index = str(line_index)
         draw_lines[line_index] = (
             line,        # 0 : the text of the line
             font_id,     # 1 : blf loaded font file
             text_size,   # 2 : font size of the text
-            text_color,  # 3 : color of the text
+            line_color,  # 3 : color of the text
             offset_x,    # 4 : horizontal offset of the line
             offset_y,    # 5 : vertical offset of the line
             sub_line,    # 6 : boolean, true if a link is found
@@ -373,12 +365,16 @@ def draw_text(
         sub = sub_lines
 
         for line_text in lines:
-            if lines[line_text][6] and not lines[line_text][7]:  # if sub_line
+
+            link = lines[line_text][6]
+            image = lines[line_text][7]
+
+            if link and not image:
                 for sub_index in sub:
                     char = sub[sub_index][0]
                     font_id = sub[sub_index][1]
                     text_size = sub[sub_index][2]
-                    text_color = sub[sub_index][3]
+                    char_color = sub[sub_index][3]
                     offset_x = sub[sub_index][4]
                     offset_y = sub[sub_index][5]
 
@@ -397,13 +393,13 @@ def draw_text(
                         context.area.height - offset_y,
                         0
                     )
-                    blf.color(font_id, *text_color)
+                    blf.color(font_id, *char_color)
                     blf.draw(font_id, char)
             else:
                 line = lines[line_text][0]
                 font_id = lines[line_text][1]
                 text_size = lines[line_text][2]
-                text_color = lines[line_text][3]
+                line_color = lines[line_text][3]
                 offset_x = lines[line_text][4]
                 offset_y = lines[line_text][5]
 
@@ -422,7 +418,7 @@ def draw_text(
                     context.area.height - offset_y,
                     0
                 )
-                blf.color(font_id, *text_color)
+                blf.color(font_id, *line_color)
                 blf.draw(font_id, line)
 
 
@@ -448,10 +444,14 @@ class DrawDocument(Operator):
                 text_handle = bpy.app.driver_namespace['text_handle']
                 image_handle = bpy.app.driver_namespace['image_handle']
 
+                handles = [bg_handle, text_handle, image_handle]
+
                 space = bpy.types.SpaceNodeEditor
-                space.draw_handler_remove(bg_handle, 'WINDOW')
-                space.draw_handler_remove(text_handle, 'WINDOW')
-                space.draw_handler_remove(image_handle, 'WINDOW')
+                remove = space.draw_handler_remove
+
+                for handle in handles:
+                    remove(handle, 'WINDOW')
+
                 return {'FINISHED'}
             except AttributeError:
                 print('No draw handlers found!')
@@ -529,7 +529,7 @@ class DrawDocument(Operator):
             # Now we add the draw handlers to the window
             bpy.app.driver_namespace['bg_handle'] = add_draw(
                 draw_bg,
-                (),
+                (self, context),
                 'WINDOW',
                 'BACKDROP'
             )
@@ -559,8 +559,11 @@ class DocViewProps(PropertyGroup):
         default=24,
         update=update_func
     )
+
     offset_x: FloatProperty(default=0.0)
+
     offset_y: FloatProperty(default=0.0)
+
     internal: BoolProperty(
         default=False,
         update=update_func
@@ -572,6 +575,63 @@ class DocViewProps(PropertyGroup):
     bold_path = os.path.join(folder, 'fonts/OpenSans-Bold.ttf')
     code_path = os.path.join(folder, 'fonts/CourierPrime-Regular.ttf')
     external_path = os.path.join(folder, 'sample.md')
+
+    # Grabbing Blender's Text Editor background and text colors
+    # To create the Blender theme
+    blender_theme = bpy.context.preferences.themes['Default']
+    back = blender_theme.text_editor.space.back
+    block = blender_theme.text_editor.line_numbers_background
+    text = blender_theme.text_editor.space.text
+    link = blender_theme.text_editor.cursor
+
+    # Dict of Themes
+    # Key: theme name
+    # Value: list of 4 RGBA values
+    # Format: Background, Block, Text and Link Colors
+    # [R-bg,    G-bg,    B-bg,    A-bg,
+    #  R-block, G-block, B-block, A-block,
+    #  R-text,  G-text,  B-text,  A-text,
+    #  R-link,  G-link,  B-link,  A-link]
+    themes = {
+        'light': [
+            0.8, 0.8, 0.8, 1,     # bg: White
+            0.4, 0.4, 0.4, 1,     # block: Grey
+            0, 0, 0, 1,           # text: Black
+            0, 0, 1, 1],          # link: Blue
+        'dark': [
+            0.1, 0.1, 0.1, 1,     # bg: Dark Grey
+            0, 0, 0, 1,           # block: Black
+            0.6, 0.6, 0.6, 1,     # text: Light Grey
+            0, 0, 1, 1],          # link: Blue
+        'blender': [
+            *back, 1,             # bg: Grey
+            *block, 1,            # block: Dark Grey
+            *text, 1,             # text: Off White
+            *link, 1],            # link: Light Blue
+        'paperback': [
+            0.7, 0.7, 0.6, 1,     # bg: Tan
+            0.4, 0.4, 0.3, 1,     # block: Brown
+            0.25, 0.25, 0.25, 1,  # text: Grey
+            0, 0, 0.5, 1],        # link: Dark Blue
+        'c64': [
+            0, 0, 0.66, 1,        # bg: Dark Blue
+            0.4, 0.4, 0.3, 1,     # block: Off Grey
+            0, 0.53, 1, 1,        # text: Light Blue
+            1, 1, 1, 1]           # link: White
+    }
+
+    current_theme: EnumProperty(
+        name='Theme',  # noqa
+        items={
+            ('light', 'Light', 'Black Text on White Background'),  # noqa
+            ('dark', 'Dark', 'Light Grey Text on Dark Grey Background'),  # noqa
+            ('blender', 'Blender', 'Off White Text on Grey Background'),  # noqa
+            ('paperback', 'Paperback', 'Grey Text on Tan Background'),  # noqa
+            ('c64', 'C64', 'Light Blue Text on Dark Blue Background')  # noqa
+        },
+        default='light',  # noqa
+        update=update_func
+    )
 
 
 classes = [
@@ -588,6 +648,7 @@ def menu_func(self, context):
         layout.operator('docview.draw_document', icon='FILE_TICK')
         layout.prop(props, 'base_size', text='Size')
         layout.prop(props, 'internal', text='Use Blender Text Data')
+        layout.prop(props, 'current_theme', text='Theme')
 
 
 def register():
