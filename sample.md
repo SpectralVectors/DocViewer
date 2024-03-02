@@ -1,8 +1,11 @@
 # Primary title
 ![](/images/Blender.png)
 ## Secondary title
-
+![](/images/Markdown.png)
 ### Tertiary title
+`code is code`
+`bpy.ops.object.delete()`
+`objects = [object for object in bpy.data.objects if object.name == 'Cube']`
 
 #### Click the button below to directly download MCprep
 _By downloading and installing, you agree to the following [Privacy Policy](https://theduckcow.com/privacy-policy) including anonymous data tracking clause._

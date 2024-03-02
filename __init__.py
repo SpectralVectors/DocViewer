@@ -18,7 +18,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 1, 4),
+    "version": (0, 1, 6),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -43,9 +43,6 @@ def draw_bg(self, context):
     theme = themes[current_theme]
     bg_color = theme[:4]
 
-    # window = bpy.context.window
-    # for area in window.screen.areas:
-    #     if area.ui_type == 'DocumentViewer':
     width = context.area.width
     height = context.area.height
 
@@ -78,6 +75,76 @@ def draw_bg(self, context):
         bg_color
     )
     batch.draw(bg_shader)
+
+
+# Function to set up Background drawing
+def draw_block(self, context, code_blocks):
+    props = context.scene.docview_props
+    base_size = props.base_size
+
+    current_theme = props.current_theme
+    themes = props.themes
+    theme = themes[current_theme]
+    block_color = theme[4:8]
+
+    x = context.region.x
+    y = context.region.y
+    view = context.region.view2d
+    scroll = view.region_to_view(x, y)
+    scroll_factor = 5
+
+    #  width = context.area.width
+    height = context.area.height
+
+    length = 0
+    for block in code_blocks:
+        if code_blocks[block][2] > length:
+            length = code_blocks[block][2]
+    length = length * base_size * 0.7
+
+    for block in code_blocks:
+        offset_x = code_blocks[block][0]
+        offset_y = height - code_blocks[block][1] + base_size / 8
+
+        if scroll[0] > 0:
+            offset_x -= scroll[0] / scroll_factor
+        if scroll[1] < 0:
+            offset_y -= scroll[1] / scroll_factor
+
+        quarter = base_size / 4
+        three_quarters = base_size - quarter
+        bottom = offset_y - three_quarters
+        top = offset_y + three_quarters
+
+        # Here we define the positions of the vertices of the blocks
+        block_vertices = (
+            (offset_x, bottom),  # Bottom Left
+            (length, bottom),  # Bottom Right
+            (offset_x, top),  # Top Left
+            (length, top)  # Top Right
+        )
+
+        # This defines the order in which we connect the vertices,
+        # creating two triangles
+        indices = (
+            (0, 1, 2),  # _ \
+            (2, 1, 3)  # \ |
+        )
+
+        # Creating the shader to fill in the faces we created above
+        block_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        batch = batch_for_shader(
+            block_shader,
+            'TRIS',
+            {"pos": block_vertices},
+            indices=indices
+        )
+        # This is where we define the background color
+        block_shader.uniform_float(
+            "color",
+            block_color
+        )
+        batch.draw(block_shader)
 
 
 def draw_image(self, context, images):
@@ -132,14 +199,16 @@ def draw_image(self, context, images):
 # Format the text before passing it onto the draw function
 def format_text(context, text_lines, fonts):
     props = context.scene.docview_props
+
     current_theme = props.current_theme
-    # Set the current theme
     themes = props.themes
     theme = themes[current_theme]
-    # Slice the theme into 4 RGBA colors
     text_color = theme[8:12]
     link_color = theme[12:]
+
     regular_path = props.regular_path
+
+    # The base size for all drawing: font, offset, image
     base_size = props.base_size
 
     # Derive all scale elements from the base font size
@@ -167,9 +236,13 @@ def format_text(context, text_lines, fonts):
     # bpy.data.images[image] : image data
     # 'image' : (image, texture, width, height, offset_x, offset_y)
 
+    code_blocks = {}
+    quote_blocks = {}
+
     regular = fonts[0]
     italic = fonts[1]
     bold = fonts[2]
+    code = fonts[3]
 
     offset_x = half
     offset_y = base_size + half + quarter
@@ -185,6 +258,8 @@ def format_text(context, text_lines, fonts):
         italicized = first('_') or first('*')
         italicized = italicized and not first('**') or first('__')
         bolded = first('__') or first('**')
+        code_block = first('`')
+        quote_block = first('>')
 
         # Format Headers
         if header:
@@ -227,23 +302,48 @@ def format_text(context, text_lines, fonts):
         # Format Bullets
         elif bullet:
             if first('-'):
-                b1 = int(sixth)
+                b1 = 0
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '◦')
                 line = f"{' '*b1}{line}"
             elif first('  -'):
-                b2 = int(third)
+                b2 = int(sixth)
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '•')
                 line = f"{' '*b2}{line}"
             elif first('    -'):
-                b3 = int(half)
+                b3 = int(third)
                 text_size = base_size
                 font_id = regular
                 line = line.lstrip().replace('-', '∙')
                 line = f"{' '*b3}{line}"
+
+        elif code_block:
+            line = line.replace('`', '')
+            line = f' {line}'
+            length = len(line)
+            text_size = base_size
+            offset_x = base_size
+            if len(code_blocks) < 1:
+                offset_y += sixth
+            font_id = code
+            code_blocks[line_index] = (
+                offset_x,
+                offset_y,
+                length
+            )
+
+        elif quote_block:
+            line = line.replace('>', '')
+            text_size = base_size
+            offset_x = half
+            font_id = regular
+            quote_blocks[line_index] = (
+                offset_x,
+                offset_y
+            )
 
         # Format Regular Text
         else:
@@ -290,8 +390,8 @@ def format_text(context, text_lines, fonts):
                         texture,   # 1 : gpu texture from image
                         width,     # 2 : image width
                         height,    # 3 : image height
-                        image_x,  # 4 : image x start position
-                        image_y,  # 5 : image y start position
+                        image_x,   # 4 : image x start position
+                        image_y,   # 5 : image y start position
                     )
                     image_line = True
                     line = ''
@@ -343,7 +443,7 @@ def format_text(context, text_lines, fonts):
         )
         offset_y += base_size + sixth
 
-    return draw_lines, sub_lines, offset_x, offset_y, images
+    return draw_lines, sub_lines, offset_x, offset_y, images, code_blocks  # noqa
 
 
 # Function to setup Text drawing
@@ -443,8 +543,9 @@ class DrawDocument(Operator):
                 bg_handle = bpy.app.driver_namespace['bg_handle']
                 text_handle = bpy.app.driver_namespace['text_handle']
                 image_handle = bpy.app.driver_namespace['image_handle']
+                block_handle = bpy.app.driver_namespace['block_handle']
 
-                handles = [bg_handle, text_handle, image_handle]
+                handles = [bg_handle, text_handle, image_handle, block_handle]
 
                 space = bpy.types.SpaceNodeEditor
                 remove = space.draw_handler_remove
@@ -483,6 +584,7 @@ class DrawDocument(Operator):
         regular_path = props.regular_path
         italic_path = props.italic_path
         bold_path = props.bold_path
+        code_path = props.code_path
         internal = props.internal
 
         if context.area.ui_type == 'DocumentViewer':
@@ -492,13 +594,15 @@ class DrawDocument(Operator):
                 italic = blf.load(italic_path)
             if os.path.exists(bold_path):
                 bold = blf.load(bold_path)
+            if os.path.exists(code_path):
+                code = blf.load(code_path)
 
             if regular is not None:
                 font_id = regular
             else:
-                font_id = regular = italic = bold = 0 # noqa F841
+                font_id = regular = italic = bold = code = 0 # noqa F841
 
-            fonts = [regular, italic, bold]
+            fonts = [regular, italic, bold, code]
 
             add_draw = bpy.types.SpaceNodeEditor.draw_handler_add
             add_modal = context.window_manager.modal_handler_add
@@ -521,7 +625,7 @@ class DrawDocument(Operator):
                     text.lines[0].body = '# Check out Markdown in Blender!'
                 text_lines = [line.body for line in text.lines]
 
-            draw_lines, sub_lines, offset_x, offset_y, images = format_text(context, text_lines, fonts)  # noqa F458
+            draw_lines, sub_lines, offset_x, offset_y, images, code_blocks = format_text(context, text_lines, fonts)  # noqa F458
 
             if 'bg_handle' in bpy.app.driver_namespace:
                 self.remove_handle()
@@ -530,6 +634,13 @@ class DrawDocument(Operator):
             bpy.app.driver_namespace['bg_handle'] = add_draw(
                 draw_bg,
                 (self, context),
+                'WINDOW',
+                'BACKDROP'
+            )
+
+            bpy.app.driver_namespace['block_handle'] = add_draw(
+                draw_block,
+                (self, context, code_blocks),
                 'WINDOW',
                 'BACKDROP'
             )
@@ -556,7 +667,7 @@ class DrawDocument(Operator):
 
 class DocViewProps(PropertyGroup):
     base_size: IntProperty(
-        default=24,
+        default=18,
         update=update_func
     )
 
@@ -594,40 +705,46 @@ class DocViewProps(PropertyGroup):
     #  R-link,  G-link,  B-link,  A-link]
     themes = {
         'light': [
-            0.8, 0.8, 0.8, 1,     # bg: White
-            0.4, 0.4, 0.4, 1,     # block: Grey
-            0, 0, 0, 1,           # text: Black
-            0, 0, 1, 1],          # link: Blue
+            0.8, 0.8, 0.8, 1,       # bg: White
+            0.6, 0.6, 0.6, 1,       # block: Grey
+            0, 0, 0, 1,             # text: Black
+            0, 0, 1, 1],            # link: Blue
         'dark': [
-            0.1, 0.1, 0.1, 1,     # bg: Dark Grey
-            0, 0, 0, 1,           # block: Black
-            0.6, 0.6, 0.6, 1,     # text: Light Grey
-            0, 0, 1, 1],          # link: Blue
+            0.1, 0.1, 0.1, 1,       # bg: Dark Grey
+            0, 0, 0, 1,             # block: Black
+            0.6, 0.6, 0.6, 1,       # text: Light Grey
+            0, 0, 1, 1],            # link: Blue
         'blender': [
-            *back, 1,             # bg: Grey
-            *block, 1,            # block: Dark Grey
-            *text, 1,             # text: Off White
-            *link, 1],            # link: Light Blue
+            *back, 1,                # bg: Grey
+            *block, 1,               # block: Dark Grey
+            *text, 1,                # text: Off White
+            *link, 1],               # link: Light Blue
         'paperback': [
-            0.7, 0.7, 0.6, 1,     # bg: Tan
-            0.4, 0.4, 0.3, 1,     # block: Brown
-            0.25, 0.25, 0.25, 1,  # text: Grey
-            0, 0, 0.5, 1],        # link: Dark Blue
+            0.7, 0.7, 0.6, 1,         # bg: Tan
+            0.8, 0.8, 0.3, 1,         # block: Yellow
+            0.2, 0.2, 0.2, 1,         # text: Grey
+            0, 0, 0.7, 1],            # link: Dark Blue
         'c64': [
-            0, 0, 0.66, 1,        # bg: Dark Blue
-            0.4, 0.4, 0.3, 1,     # block: Off Grey
-            0, 0.53, 1, 1,        # text: Light Blue
-            1, 1, 1, 1]           # link: White
+            0, 0, 0.66, 1,            # bg: Blue
+            0, 0, 0.33, 1,            # block: Dark Blue
+            0, 0.53, 1, 1,            # text: Light Blue
+            0.8, 0.8, 0.8, 1],        # link: White
+        'github': [
+            0.051, 0.067, 0.09, 1,    # bg: Dark Blue Grey
+            0.086, 0.106, 0.133, 1,   # block: Dark Grey
+            0.902, 0.929, 0.953, 1,   # text: Off White
+            0.184, 0.506, 0.969, 1],  # link: Blue
     }
 
     current_theme: EnumProperty(
         name='Theme',  # noqa
         items={
-            ('light', 'Light', 'Black Text on White Background'),  # noqa
-            ('dark', 'Dark', 'Light Grey Text on Dark Grey Background'),  # noqa
-            ('blender', 'Blender', 'Off White Text on Grey Background'),  # noqa
-            ('paperback', 'Paperback', 'Grey Text on Tan Background'),  # noqa
-            ('c64', 'C64', 'Light Blue Text on Dark Blue Background')  # noqa
+            ('light', 'Light', 'Black Text on White Background', 'OUTLINER_OB_LIGHT', 0),  # noqa
+            ('dark', 'Dark', 'Light Grey Text on Dark Grey Background', 'LIGHT', 1),  # noqa
+            ('blender', 'Blender', 'Off White Text on Grey Background', 'BLENDER', 2),  # noqa
+            ('paperback', 'Paperback', 'Grey Text on Tan Background', 'HELP', 3),  # noqa
+            ('c64', 'C64', 'Light Blue Text on Dark Blue Background', 'RESTRICT_VIEW_OFF', 4),  # noqa
+            ('github', 'Github', 'White Text on Dark Blue Grey Background', 'NETWORK_DRIVE', 5),  # noqa
         },
         default='light',  # noqa
         update=update_func
@@ -647,8 +764,8 @@ def menu_func(self, context):
         props = context.scene.docview_props
         layout.operator('docview.draw_document', icon='FILE_TICK')
         layout.prop(props, 'base_size', text='Size')
-        layout.prop(props, 'internal', text='Use Blender Text Data')
         layout.prop(props, 'current_theme', text='Theme')
+        layout.prop(props, 'internal', text='Use Blender Text Data')
 
 
 def register():
