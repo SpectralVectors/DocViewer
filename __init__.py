@@ -18,7 +18,7 @@ from PIL import ImageFont
 bl_info = {
     "name": "Document Viewer",
     "author": "Spectral Vectors",
-    "version": (0, 1, 6),
+    "version": (0, 1, 7),
     "blender": (2, 80, 0),
     "location": "Document Viewer Editor",
     "description": "Read and render Markdown files in a custom Editor",
@@ -78,7 +78,7 @@ def draw_bg(self, context):
 
 
 # Function to set up Background drawing
-def draw_block(self, context, code_blocks):
+def draw_block(self, context, code_blocks, quote_blocks):
     props = context.scene.docview_props
     base_size = props.base_size
 
@@ -117,7 +117,7 @@ def draw_block(self, context, code_blocks):
         top = offset_y + three_quarters
 
         # Here we define the positions of the vertices of the blocks
-        block_vertices = (
+        code_block_vertices = (
             (offset_x, bottom),  # Bottom Left
             (length, bottom),  # Bottom Right
             (offset_x, top),  # Top Left
@@ -132,19 +132,63 @@ def draw_block(self, context, code_blocks):
         )
 
         # Creating the shader to fill in the faces we created above
-        block_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        code_block_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         batch = batch_for_shader(
-            block_shader,
+            code_block_shader,
             'TRIS',
-            {"pos": block_vertices},
+            {"pos": code_block_vertices},
             indices=indices
         )
         # This is where we define the background color
-        block_shader.uniform_float(
+        code_block_shader.uniform_float(
             "color",
             block_color
         )
-        batch.draw(block_shader)
+        batch.draw(code_block_shader)
+
+    for block in quote_blocks:
+        offset_x = quote_blocks[block][0]
+        offset_y = height - quote_blocks[block][1] + base_size / 4
+
+        if scroll[0] > 0:
+            offset_x -= scroll[0] / scroll_factor
+        if scroll[1] < 0:
+            offset_y -= scroll[1] / scroll_factor
+
+        quarter = base_size / 4
+        three_quarters = base_size - quarter
+        bottom = offset_y - three_quarters
+        top = offset_y + three_quarters
+        width = offset_x + (base_size / 2)
+        # Here we define the positions of the vertices of the blocks
+        quote_block_vertices = (
+            (offset_x, bottom),  # Bottom Left
+            (width, bottom),  # Bottom Right
+            (offset_x, top),  # Top Left
+            (width, top)  # Top Right
+        )
+
+        # This defines the order in which we connect the vertices,
+        # creating two triangles
+        indices = (
+            (0, 1, 2),  # _ \
+            (2, 1, 3)  # \ |
+        )
+
+        # Creating the shader to fill in the faces we created above
+        quote_block_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        batch = batch_for_shader(
+            quote_block_shader,
+            'TRIS',
+            {"pos": quote_block_vertices},
+            indices=indices
+        )
+        # This is where we define the background color
+        quote_block_shader.uniform_float(
+            "color",
+            block_color
+        )
+        batch.draw(quote_block_shader)
 
 
 def draw_image(self, context, images):
@@ -203,6 +247,7 @@ def format_text(context, text_lines, fonts):
     current_theme = props.current_theme
     themes = props.themes
     theme = themes[current_theme]
+    # block_color = theme[4:8]
     text_color = theme[8:12]
     link_color = theme[12:]
 
@@ -286,18 +331,21 @@ def format_text(context, text_lines, fonts):
                 text_size = base_size + eigth
             line = line.replace('#', '')
             offset_y += text_size
+            line_color = text_color
 
         # Format Italic
         elif italicized:
             text_size = base_size
             font_id = italic
             line = line.replace('_', '').replace('*', '')
+            line_color = text_color
 
         # Format Bold
         elif bolded:
             text_size = base_size
             font_id = bold
             line = line.replace('__', '').replace('**', '')
+            line_color = text_color
 
         # Format Bullets
         elif bullet:
@@ -319,6 +367,7 @@ def format_text(context, text_lines, fonts):
                 font_id = regular
                 line = line.lstrip().replace('-', '∙')
                 line = f"{' '*b3}{line}"
+            line_color = text_color
 
         elif code_block:
             line = line.replace('`', '')
@@ -334,21 +383,25 @@ def format_text(context, text_lines, fonts):
                 offset_y,
                 length
             )
+            line_color = text_color
 
         elif quote_block:
             line = line.replace('>', '')
+            line = f'  {line}'
             text_size = base_size
-            offset_x = half
+            offset_x = base_size
             font_id = regular
             quote_blocks[line_index] = (
                 offset_x,
                 offset_y
             )
+            line_color = text_color
 
         # Format Regular Text
         else:
             text_size = base_size
             font_id = regular
+            line_color = text_color
 
         # Determine X, Y offsets for drawing lines
         if text_size == base_size:
@@ -429,7 +482,6 @@ def format_text(context, text_lines, fonts):
 
         # For line level formatting
         # e.g. headers, regular text, full lines in italic or bold
-        line_color = text_color
         line_index = str(line_index)
         draw_lines[line_index] = (
             line,        # 0 : the text of the line
@@ -443,7 +495,7 @@ def format_text(context, text_lines, fonts):
         )
         offset_y += base_size + sixth
 
-    return draw_lines, sub_lines, offset_x, offset_y, images, code_blocks  # noqa
+    return draw_lines, sub_lines, offset_x, offset_y, images, code_blocks, quote_blocks  # noqa
 
 
 # Function to setup Text drawing
@@ -625,7 +677,7 @@ class DrawDocument(Operator):
                     text.lines[0].body = '# Check out Markdown in Blender!'
                 text_lines = [line.body for line in text.lines]
 
-            draw_lines, sub_lines, offset_x, offset_y, images, code_blocks = format_text(context, text_lines, fonts)  # noqa F458
+            draw_lines, sub_lines, offset_x, offset_y, images, code_blocks, quote_blocks = format_text(context, text_lines, fonts)  # noqa F458
 
             if 'bg_handle' in bpy.app.driver_namespace:
                 self.remove_handle()
@@ -640,7 +692,7 @@ class DrawDocument(Operator):
 
             bpy.app.driver_namespace['block_handle'] = add_draw(
                 draw_block,
-                (self, context, code_blocks),
+                (self, context, code_blocks, quote_blocks),
                 'WINDOW',
                 'BACKDROP'
             )

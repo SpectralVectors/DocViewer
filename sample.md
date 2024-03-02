@@ -11,6 +11,8 @@
 _By downloading and installing, you agree to the following [Privacy Policy](https://theduckcow.com/privacy-policy) including anonymous data tracking clause._
 **Do not download the zip file from the readme page, you must click the button above**
 
+> 'tis the season to be jolly.
+> - Santa Anna
 ### New in this (3.0.2) release:
 - Added brand new feature: Meshswap block spawning!
   - You can now directly append meshswap groups into your scene from either the Shift-A menu, or the spawner panel
